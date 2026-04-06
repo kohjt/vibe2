@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>회의록 자동 작성</title>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">회의록 자동 작성</div>
+  <div class="meta">Whisper · Flask · MongoDB</div>
+</header>
+
+<main class="container">
+  <section class="panel upload">
+    <h2>회의 음성 업로드</h2>
+    <form id="uploadForm">
+      <input type="text" name="title" id="title" placeholder="회의 제목"/>
+      <input type="date" name="meeting_date" id="meeting_date"/>
+      <input type="text" name="participants" id="participants" placeholder="참여자(쉼표로 구분) 예: 홍길동,김철수"/>
+      <input type="file" name="audio" id="audio" accept=".wav,.mp3,.m4a,.flac,.ogg,.webm"/>
+      <button type="submit">업로드 · 전사</button>
+    </form>
+    <div id="uploadResult" class="muted"></div>
+  </section>
+
+  <section class="panel search">
+    <h2>검색</h2>
+    <div class="search-grid">
+      <input type="text" id="q" placeholder="키워드 검색(제목/전사)"/>
+      <input type="date" id="start"/>
+      <input type="date" id="end"/>
+      <input type="text" id="p" placeholder="참여자(쉼표로 구분)"/>
+      <button id="searchBtn">검색</button>
+      <button id="resetBtn" class="ghost">초기화</button>
+    </div>
+  </section>
+
+  <section class="panel grid">
+    <div class="list">
+      <h3>결과 목록</h3>
+      <ul id="records"></ul>
+    </div>
+    <div class="detail">
+      <h3>상세</h3>
+      <div id="detailBox" class="card">항목을 선택하세요.</div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  GCP VM · Ubuntu 20.04 LTS
+</footer>
+
+<script>
+const recordsEl = document.getElementById('records');
+const detailEl  = document.getElementById('detailBox');
+
+async function uploadFile(e){
+  e.preventDefault();
+  const f = document.getElementById('audio').files[0];
+  const title = document.getElementById('title').value;
+  const meeting_date = document.getElementById('meeting_date').value;
+  const participants = document.getElementById('participants').value;
+  if(!f){ return; }
+  const fd = new FormData();
+  fd.append('audio', f);
+  fd.append('title', title);
+  fd.append('meeting_date', meeting_date);
+  fd.append('participants', participants);
+  const res = await fetch('/upload', { method:'POST', body: fd });
+  const j = await res.json();
+  const out = document.getElementById('uploadResult');
+  if(j.ok){
+    out.textContent = `저장 완료: ${j.title}`;
+    loadRecords();
+    (document.getElementById('uploadForm')).reset();
+  }else{
+    out.textContent = `실패: ${j.error || '알 수 없는 오류'}`;
+  }
+}
+
+function qParam(){
+  const q = document.getElementById('q').value.trim();
+  const start = document.getElementById('start').value.trim();
+  const end = document.getElementById('end').value.trim();
+  const p = document.getElementById('p').value.trim();
+  const params = new URLSearchParams();
+  if(q) params.set('q', q);
+  if(start) params.set('start', start);
+  if(end) params.set('end', end);
+  if(p) params.set('p', p);
+  const qs = params.toString();
+  return qs ? '?' + qs : '';
+}
+
+async function loadRecords(){
+  const res = await fetch('/records' + qParam());
+  const j = await res.json();
+  recordsEl.innerHTML = '';
+  if(!j.ok){ return; }
+  j.items.forEach(it=>{
+    const li = document.createElement('li');
+    li.className = 'row';
+    const date = it.meeting_date || '-';
+    const ppl = (it.participants || []).join(', ');
+    li.innerHTML = `
+      <div class="row-main">
+        <div class="title">${it.title || '(제목 없음)'}</div>
+        <div class="meta">${date} · ${ppl}</div>
+      </div>
+      <button class="ghost" data-id="${it.id}">보기</button>
+    `;
+    recordsEl.appendChild(li);
+  });
+  recordsEl.querySelectorAll('button.ghost').forEach(btn=>{
+    btn.addEventListener('click', ()=> loadDetail(btn.dataset.id));
+  });
+}
+
+async function loadDetail(id){
+  const res = await fetch('/record/' + id);
+  const j = await res.json();
+  if(!j.ok){ return; }
+  const it = j.item;
+  const mins = ((it.duration_ms || 0)/60000).toFixed(2);
+  const ppl = (it.participants || []).join(', ');
+  detailEl.innerHTML = `
+    <div class="kv">
+      <div>제목</div><div>${it.title}</div>
+      <div>회의일자</div><div>${it.meeting_date}</div>
+      <div>참여자</div><div>${ppl || '-'}</div>
+      <div>길이(분)</div><div>${mins}</div>
+      <div>생성일</div><div>${new Date(it.created_at).toLocaleString()}</div>
+    </div>
+    <div class="subhead">전사</div>
+    <p class="transcript">${it.transcript || '-'}</p>
+    <div class="actions">
+      <a class="btn" href="/download/${encodeURIComponent(it.id)}.txt">전사문 다운로드(txt)</a>
+      <a class="btn ghost" href="/audio/${encodeURIComponent(it.filename)}" target="_blank">오디오 재생</a>
+    </div>
+  `;
+}
+
+document.getElementById('uploadForm').addEventListener('submit', uploadFile);
+document.getElementById('searchBtn').addEventListener('click', loadRecords);
+document.getElementById('resetBtn').addEventListener('click', ()=>{
+  document.getElementById('q').value = '';
+  document.getElementById('start').value = '';
+  document.getElementById('end').value = '';
+  document.getElementById('p').value = '';
+  loadRecords();
+});
+
+loadRecords();
+</script>
+</body>
+</html>
